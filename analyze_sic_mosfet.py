@@ -18,33 +18,43 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
 
+# 현재 파이썬 파일이 있는 디렉터리를 프로젝트 루트로 지정합니다.
 ROOT = Path(__file__).resolve().parent
 INPUT_CSV = ROOT / "data" / "temperature_measurements.csv"
 OUTPUT_DIR = ROOT / "outputs"
 
-# Match these settings to the actual measurement protocol.
+# 아래 설정값은 실제 실험 방법에 맞춰 조정해야 합니다.
+# VTH_CURRENT_A: 임계전압 추출에 사용할 드레인 전류 기준(A)
+# RDS_VGS_TARGET_V: 온저항을 추정할 때 기준으로 삼는 게이트 전압(V)
+# RDS_VGS_TOLERANCE_V: 기준 게이트 전압에서 허용할 차이(V)
+# MIN_POINTS_FOR_FIT: 온도 모델을 적합할 때 필요한 서로 다른 온도의 최소 개수
 VTH_CURRENT_A = 0.010
 RDS_VGS_TARGET_V = 10.0
 RDS_VGS_TOLERANCE_V = 0.25
 MIN_POINTS_FOR_FIT = 3
 
 
+# CSV를 읽고 필수 열, 숫자 형식, 온도 및 곡선 종류가 유효한지 검사합니다.
 def load_data(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Missing input CSV: {path}")
+    # CSV 파일을 pandas DataFrame으로 읽습니다.
     df = pd.read_csv(path)
+    # 분석에 반드시 필요한 열 이름입니다.
     required = {"temperature_C", "curve_type", "vgs_V", "vds_V", "id_A"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
     if df.empty:
         raise ValueError("CSV has no measurement rows. Add real measurements first.")
+    # CSV에서 숫자로 읽히지 않는 값은 NaN으로 바꾸어 아래에서 검사합니다.
     for col in ["temperature_C", "vgs_V", "vds_V", "id_A"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     if "rds_on_ohm" not in df:
         df["rds_on_ohm"] = np.nan
     else:
         df["rds_on_ohm"] = pd.to_numeric(df["rds_on_ohm"], errors="coerce")
+    # 곡선 종류 표기를 소문자로 통일해 입력 실수를 줄입니다.
     df["curve_type"] = df["curve_type"].astype(str).str.strip().str.lower()
     if df["temperature_C"].isna().any():
         raise ValueError("temperature_C contains blank or invalid values.")
@@ -57,14 +67,17 @@ def load_data(path: Path) -> pd.DataFrame:
     return df
 
 
+# 현재 작성된 그래프를 PNG 파일로 저장하고 그래프 창을 닫습니다.
 def save_plot(path: Path) -> None:
     plt.tight_layout()
     plt.savefig(path, dpi=180, bbox_inches="tight")
     plt.close()
 
 
+# 온도별 transfer/output 특성 그래프를 만들고 각 데이터 종류의 행 개수를 반환합니다.
 def plot_curves(df: pd.DataFrame) -> dict[str, int]:
     counts = {}
+    # 곡선 종류마다 파일명, x축 데이터 열, 축 제목을 지정합니다.
     specs = [
         ("transfer", "transfer_curves.png", "vgs_V", "Gate-source voltage VGS (V)"),
         ("output", "output_curves.png", "vds_V", "Drain-source voltage VDS (V)"),
@@ -76,6 +89,7 @@ def plot_curves(df: pd.DataFrame) -> dict[str, int]:
             logging.info("No %s data; skipping plot.", kind)
             continue
         plt.figure(figsize=(8, 5))
+        # 측정 온도별로 데이터를 나눠 각 온도의 곡선을 따로 그립니다.
         for temp, group in sub.groupby("temperature_C"):
             group = group.sort_values(xcol)
             plt.plot(group[xcol], group["id_A"], marker="o", label=f"{temp:g} °C")
@@ -88,17 +102,21 @@ def plot_curves(df: pd.DataFrame) -> dict[str, int]:
     return counts
 
 
+# 각 온도의 transfer curve에서 ID가 기준 전류에 도달하는 VGS를 보간해 Vth를 추정합니다.
 def extract_vth(df: pd.DataFrame) -> pd.DataFrame:
     transfer = df[df["curve_type"] == "transfer"].dropna(subset=["vgs_V", "id_A"])
     rows: list[dict[str, Any]] = []
     for temp, group in transfer.groupby("temperature_C"):
+        # 같은 VGS에서 반복 측정한 전류가 있으면 평균을 내고 VGS 순으로 정렬합니다.
         curve = group.groupby("vgs_V", as_index=False)["id_A"].mean().sort_values("vgs_V")
         vgs = curve["vgs_V"].to_numpy(float)
         ids = curve["id_A"].to_numpy(float)
+        # 이웃한 두 측정점 사이에서 전류가 기준값을 가로지르는 구간을 찾습니다.
         crossings = np.where((ids[:-1] - VTH_CURRENT_A) * (ids[1:] - VTH_CURRENT_A) <= 0)[0]
         crossings = [i for i in crossings if ids[i] != ids[i + 1]]
         if crossings:
             i = crossings[0]
+            # 두 점 사이를 직선으로 가정해 기준 전류에 해당하는 VGS를 선형 보간합니다.
             vth = vgs[i] + (VTH_CURRENT_A - ids[i]) * (vgs[i + 1] - vgs[i]) / (ids[i + 1] - ids[i])
             method = "linear interpolation at current criterion"
         else:
@@ -108,15 +126,18 @@ def extract_vth(df: pd.DataFrame) -> pd.DataFrame:
                      "vth_estimate_V": float(vth), "points_in_curve": int(len(curve)),
                      "method": method})
     result = pd.DataFrame(rows)
+    # 추출한 온도별 Vth와 추출 방법을 CSV로 저장합니다.
     result.to_csv(OUTPUT_DIR / "vth_by_temperature.csv", index=False)
     if result.empty:
         logging.warning("No Vth extracted. Check transfer data and VTH_CURRENT_A.")
     return result
 
 
+# 온도별 RDS(on)을 계산합니다. 직접 측정한 저항값이 있으면 계산값보다 우선합니다.
 def extract_rds_on(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for temp, group in df.groupby("temperature_C"):
+        # rds_on_ohm에 유효한 직접 측정값이 있으면 이를 먼저 사용합니다.
         direct = group[(group["curve_type"] == "rds_on") & (group["rds_on_ohm"] > 0)]
         if not direct.empty:
             vals = direct["rds_on_ohm"].dropna().to_numpy(float)
@@ -127,10 +148,13 @@ def extract_rds_on(df: pd.DataFrame) -> pd.DataFrame:
                 continue
         sub = group[group["curve_type"].isin(["output", "rds_on"])].dropna(
             subset=["vgs_V", "vds_V", "id_A"])
+        # 0 이하 전류/전압은 VDS/ID 계산에 사용할 수 없으며, VGS가 목표값에 가까운 점만 남깁니다.
         sub = sub[(sub["id_A"] > 0) & (sub["vds_V"] > 0) &
                   ((sub["vgs_V"] - RDS_VGS_TARGET_V).abs() <= RDS_VGS_TOLERANCE_V)]
         if sub.empty:
             continue
+        # 직접 측정값이 없을 때 VDS/ID를 저항의 근사값으로 사용합니다.
+        # 이 근사는 적절한 낮은 VDS의 저항성 영역에서만 타당합니다.
         values = (sub["vds_V"] / sub["id_A"]).to_numpy(float)
         values = values[np.isfinite(values) & (values > 0)]
         if len(values):
@@ -145,14 +169,17 @@ def extract_rds_on(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+# 온도별 Vth가 충분할 때 Vth = 기울기×온도 + 절편 형태로 직선 적합합니다.
 def fit_vth(vth: pd.DataFrame) -> dict[str, Any] | None:
     if vth["temperature_C"].nunique() < MIN_POINTS_FOR_FIT:
         logging.warning("Skipping Vth fit: need at least %d distinct temperatures.", MIN_POINTS_FOR_FIT)
         return None
     x = vth["temperature_C"].to_numpy(float)
     y = vth["vth_estimate_V"].to_numpy(float)
+    # 1차 다항식 최소제곱 적합으로 기울기와 절편을 구합니다.
     slope, intercept = np.polyfit(x, y, 1)
     pred = slope * x + intercept
+    # 잔차 제곱합과 전체 편차 제곱합으로 결정계수 R²를 계산합니다.
     ss_res = float(np.sum((y - pred) ** 2))
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else None
@@ -171,6 +198,7 @@ def fit_vth(vth: pd.DataFrame) -> dict[str, Any] | None:
             "n_temperatures": int(vth["temperature_C"].nunique())}
 
 
+# RDS(on)과 절대온도 사이에 경험적 거듭제곱 관계를 적합합니다.
 def fit_rds(rds: pd.DataFrame) -> dict[str, Any] | None:
     t_c = rds["temperature_C"].to_numpy(float)
     y = rds["rds_on_ohm"].to_numpy(float)
@@ -179,8 +207,11 @@ def fit_rds(rds: pd.DataFrame) -> dict[str, Any] | None:
     if len(np.unique(t_c)) < MIN_POINTS_FOR_FIT:
         logging.warning("Skipping RDS(on) fit: need at least %d valid temperatures.", MIN_POINTS_FOR_FIT)
         return None
+    # 거듭제곱 모델에는 섭씨가 아닌 절대온도(K)를 사용합니다.
     t_k = t_c + 273.15
+    # 기준온도를 측정 온도의 중앙값으로 두어 R0가 그 온도에서의 저항이 되게 합니다.
     t0_k = float(np.median(t_k))
+    # 적합할 경험식: R(T) = R0 × (T/T0)^m. m은 데이터에서 추정하는 지수입니다.
     model = lambda tk, r0, exponent: r0 * (tk / t0_k) ** exponent
     try:
         params, _ = curve_fit(model, t_k, y, p0=[float(np.median(y)), 1.0],
@@ -208,6 +239,7 @@ def fit_rds(rds: pd.DataFrame) -> dict[str, Any] | None:
             "n_temperatures": int(len(np.unique(t_c)))}
 
 
+# transfer curve에서 dID/dVGS를 수치 미분해 트랜스컨덕턴스 gm을 추정합니다.
 def analyze_gm(df: pd.DataFrame) -> dict[str, str] | None:
     sub = df[df["curve_type"] == "transfer"].dropna(subset=["vgs_V", "id_A"])
     rows = []
@@ -215,6 +247,7 @@ def analyze_gm(df: pd.DataFrame) -> dict[str, str] | None:
         curve = group.groupby("vgs_V", as_index=False)["id_A"].mean().sort_values("vgs_V")
         if len(curve) < 3:
             continue
+        # np.gradient는 인접한 측정점의 기울기로 dID/dVGS를 근사합니다.
         gm = np.gradient(curve["id_A"].to_numpy(float), curve["vgs_V"].to_numpy(float))
         rows.extend({"temperature_C": float(temp), "vgs_V": float(vg), "gm_S": float(g)}
                     for vg, g in zip(curve["vgs_V"], gm))
@@ -236,17 +269,23 @@ def analyze_gm(df: pd.DataFrame) -> dict[str, str] | None:
             "warning": "gm is not a direct measurement of carrier mobility."}
 
 
+# 전체 분석 절차를 순서대로 실행하는 메인 함수입니다.
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # 1) 원본 CSV를 읽고 검증합니다.
     df = load_data(INPUT_CSV)
     logging.info("Loaded %d rows; temperatures: %s °C", len(df),
                  sorted(df["temperature_C"].unique().tolist()))
+    # 2) 원본 특성 곡선을 그립니다.
     curve_counts = plot_curves(df)
+    # 3) 온도별 Vth와 RDS(on)을 추출합니다.
     vth = extract_vth(df)
     rds = extract_rds_on(df)
+    # 4) 데이터가 충분할 때만 온도 의존성 모델을 적합합니다.
     vth_fit = fit_vth(vth) if not vth.empty else None
     rds_fit = fit_rds(rds) if not rds.empty else None
+    # 5) gm 추정과 요약 결과를 저장합니다.
     gm = analyze_gm(df)
     summary = {
         "device_scope": "single device; no Planar-versus-Trench inference",
@@ -268,6 +307,7 @@ def main() -> None:
             "Numerical gm is not, by itself, a direct carrier-mobility measurement."
         ]
     }
+    # 분석 조건과 적합 결과를 사람이 읽을 수 있는 JSON 파일로 저장합니다.
     with (OUTPUT_DIR / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     logging.info("Finished. Results saved in %s", OUTPUT_DIR)
