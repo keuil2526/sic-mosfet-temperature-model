@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Temperature analysis for one SCT3080KL SiC MOSFET.
 
 CSV units: temperature in °C, voltages in V, current in A, resistance in ohm.
