@@ -1,64 +1,51 @@
-# SiC MOSFET Temperature-Dependent Modeling
+# SCT3080KL 온도별 전기적 특성 분석
 
-SCT3080KL SiC MOSFET 한 개의 온도별 전기적 특성을 분석하는 Python 프로젝트입니다. 측정값을 data/temperature_measurements.csv에 입력하면 Vth, RDS(on), transfer/output curves, 수치 미분 기반 gm 및 온도 경험 모델을 계산합니다.
+SCT3080KL SiC MOSFET 20개 소자의 25°C, 100°C, 150°C 측정값을 분석하는 Python 프로젝트입니다. 입력 데이터는 소자별 주요 전기적 파라미터 요약값이며, 원시 Transfer/Output Curve 데이터가 아닙니다.
 
-주의: 이 프로젝트는 단일 소자 분석용입니다. Planar/Trench 구조 비교나 소자 간 편차를 결론 내리지 않습니다. 실제 측정값을 임의로 생성하지 않습니다.
+## 설치 및 실행
 
-## 설치
+```bash
+git clone https://github.com/keuil2526/sic-mosfet-temperature-model.git
+cd sic-mosfet-temperature-model
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python analyze_sic_mosfet.py
+```
 
-Python 3.10 이상 권장.
+Windows에서는 `.venv\\Scripts\\activate`로 가상환경을 활성화합니다.
 
-    git clone https://github.com/keuil2526/sic-mosfet-temperature-model.git
-    cd sic-mosfet-temperature-model
-    python -m venv .venv
-    source .venv/bin/activate
-    python -m pip install -r requirements.txt
+## 입력 데이터
 
-Windows에서는 가상환경 활성화 명령으로 .venv\Scripts\activate를 사용하세요.
+- `data/sct3080kl_measurements.csv`: 제공받은 엑셀의 `소자별` 시트를 분석용 long-format CSV로 변환한 데이터
+- 한 행은 한 소자의 한 온도에서의 측정값을 의미합니다.
+- 단위는 열 이름에 표시되어 있습니다.
+- 20번 소자의 100°C 행은 원본에서 측정값이 없으므로 빈칸으로 유지했습니다. 결측값은 보간하거나 임의로 채우지 않습니다.
 
-## CSV 데이터 형식
+분석 항목:
+- `IDSS`: 드레인 누설 전류 (µA)
+- `IGSS+`, `IGSS−`: 양·음 게이트 누설 전류 (nA)
+- `VGS(th)`: 문턱 전압 (V)
+- `RDS(on)`: 온저항 (mΩ)
+- `gfs`: 순방향 전달 컨덕턴스 (S)
 
-data/temperature_measurements.csv의 헤더에 맞춰 실제 측정 행을 추가합니다. 제공된 CSV는 헤더만 있는 빈 템플릿입니다.
+항복 전압 열의 `>1200`은 실제 항복전압이 1200 V라는 뜻이 아니라 1200 V보다 크다는 검열(censored) 측정값입니다. 따라서 정확한 평균 항복전압 계산에는 사용하지 않습니다.
 
-필수 열:
-- temperature_C: 소자 온도(°C)
-- curve_type: transfer, output, 또는 rds_on
-- vgs_V: 게이트-소스 전압(V)
-- vds_V: 드레인-소스 전압(V)
-- id_A: 드레인 전류(A)
+## 출력
 
-선택 열:
-- rds_on_ohm: 직접 측정한 온저항(Ω)
-- device_id: 소자 식별자
-- notes: 측정 조건 메모
+실행 후 `outputs/`에 다음 파일이 생성됩니다.
 
-Transfer curve는 같은 온도에서 VGS를 바꾸며 측정한 ID 데이터입니다. Output curve는 VDS를 바꾸며 측정한 ID 데이터입니다. 온저항은 가능하면 직접 측정해 rds_on_ohm에 기록하세요. 직접 측정값이 없으면 스크립트가 설정된 VGS 부근의 유효한 VDS/ID 값을 추정치로 사용하지만, 이는 낮은 VDS의 ohmic 영역에서만 적절합니다.
+- `summary.json`: 분석 요약, 온도별 표본 수, 모델 계수 및 제한 사항
+- `*_summary.csv`: 온도별 평균, 표준편차, 중앙값, 최소·최대
+- `*_individual.png`: 소자별 온도 변화 그래프
+- `*_mean_sd.png`: 온도별 평균 ± 표준편차 그래프
+- `*_paired_change.csv`: 동일 소자 쌍을 기준으로 한 온도 구간별 변화량 및 변화율
 
-단위는 V, A, Ω로 통일하세요. mA나 mΩ 값을 그대로 넣지 마세요. 온도는 섭씨로 입력합니다.
+## 해석상 주의사항
 
-## 실행
-
-    python analyze_sic_mosfet.py
-
-분석 결과는 outputs/에 저장됩니다.
-- summary.json: 설정, 적합 계수, 해석상 주의점
-- vth_by_temperature.csv: 온도별 Vth 추정값
-- rds_on_by_temperature.csv: 온도별 온저항 추정값
-- transfer_curves.png, output_curves.png: 특성 곡선
-- vth_temperature_fit.png: Vth의 온도별 선형 근사
-- rds_on_temperature_fit.png: RDS(on)의 온도별 경험식 근사
-- gm_by_temperature.csv 및 gm_by_temperature.png: 수치 미분 기반 gm
-
-데이터가 부족하면 해당 분석은 건너뜁니다. 기본 추출 설정은 analyze_sic_mosfet.py 상단에서 변경할 수 있습니다. VTH_CURRENT_A는 Vth 추출 기준 전류이며, RDS_VGS_TARGET_V는 온저항 추정에 사용할 게이트 전압입니다.
-
-## 모델 해석
-
-Vth는 각 온도의 transfer curve에서 설정한 임계 전류에 해당하는 VGS를 선형 보간해 추정합니다. 따라서 보고서에 임계 전류 기준과 측정 조건을 명시해야 합니다.
-
-데이터가 충분하면 Vth(T) = aT + b 선형 모델과 RDS(on)(T) = R0(TK/T0K)^m 경험적 거듭제곱 모델을 적합합니다. 이 모델들은 측정 범위의 데이터를 요약하기 위한 경험식이지, 모든 온도에서 성립하는 보편 법칙이 아닙니다. 측정 범위 밖으로 외삽하지 마세요.
-
-gm = dID/dVGS는 transfer curve의 수치 미분으로 추정합니다. gm은 그 자체로 전자 이동도의 직접 측정값이 아닙니다. 이동도 추정에는 소자 구조·치수, 산화막 정전용량, 측정 영역 등 추가 정보가 필요합니다.
-
-## 보고서에 남길 사항
-
-소자명, 온도 측정 위치와 안정화 시간, 계측기, 측정 전압 범위·간격, Vth 기준 전류, RDS(on) 측정 방식, 반복 횟수, 불확도, 모델 적합 범위 및 잔차를 기록하세요. 원본 측정값을 보존하고, 이상치를 제거할 때는 기준을 명시하세요.
+1. 이 파일에는 요약 측정값만 있으므로 Transfer Curve와 Output Curve를 재구성하거나 원시 곡선에서 Vth/gm을 다시 추출하지 않습니다.
+2. VGS(th), RDS(on), gfs는 엑셀에 기록된 측정값과 해당 측정 조건을 그대로 사용합니다.
+3. 20번 소자의 100°C 값은 결측으로 처리합니다. 해당 온도의 평균은 유효 측정값만으로 계산됩니다.
+4. 온도별 선형 적합은 측정한 25–150°C 범위 안에서만 기술적으로 해석합니다. 측정 범위 밖으로 외삽하지 않습니다.
+5. 소자별 궤적과 paired change는 동일 소자의 온도 변화 및 소자 간 편차를 함께 살펴보기 위한 것입니다. 소자 구조(Planar/Trench) 비교를 의미하지 않습니다.
+6. 원본 엑셀의 측정 조건과 불확도 설명은 연구 보고서에 함께 기록해야 합니다.
