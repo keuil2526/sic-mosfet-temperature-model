@@ -26,15 +26,53 @@ KELVIN_OFFSET = 273.15
 
 
 def load_data(path):
-    """Load measured data and retain missing values without imputation."""
-    df = pd.read_csv(path)
+    """Load CSV robustly; ignore only surplus empty cells at row ends."""
+    import csv
+
+    if not path.exists():
+        raise FileNotFoundError(f"Input data not found: {path}")
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.reader(file)
+        try:
+            header = [name.strip() for name in next(reader)]
+        except StopIteration:
+            raise ValueError("Input CSV is empty.")
+
+        expected_fields = len(header)
+        rows = []
+        for line_number, row in enumerate(reader, start=2):
+            if not row or all(not cell.strip() for cell in row):
+                continue
+
+            # Some spreadsheet exports add extra commas to otherwise empty rows.
+            # Remove only surplus trailing empty cells; never discard real data.
+            while len(row) > expected_fields and not row[-1].strip():
+                row.pop()
+
+            if len(row) != expected_fields:
+                raise ValueError(
+                    f"Malformed CSV at line {line_number}: expected "
+                    f"{expected_fields} columns but found {len(row)}. "
+                    "Check for an extra comma or a missing quote."
+                )
+            rows.append(row)
+
+    df = pd.DataFrame(rows, columns=header)
     required = {"device_id", "temperature_C", "rds_on_mohm", "gfs_S"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
+
     for column in required:
         df[column] = pd.to_numeric(df[column], errors="coerce")
-    return df
+
+    if df[["device_id", "temperature_C"]].isna().any().any():
+        raise ValueError("device_id and temperature_C must be numeric and non-empty.")
+    if df.duplicated(["device_id", "temperature_C"]).any():
+        raise ValueError("Duplicate device_id-temperature_C rows detected.")
+
+    return df.sort_values(["device_id", "temperature_C"])
 
 
 def fit_power_law(temperature_K, resistance):
