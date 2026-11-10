@@ -13,7 +13,36 @@ python -m pip install -r requirements.txt
 python analyze_sic_mosfet.py
 ```
 
-Windows에서는 `.venv\\Scripts\\activate`로 가상환경을 활성화합니다.
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/keuil2526/sic-mosfet-temperature-model.git
+cd sic-mosfet-temperature-model
+py -m venv .venv
+.\\.venv\\Scripts\\Activate.ps1
+py -m pip install -r requirements.txt
+py analyze_sic_mosfet.py
+```
+
+PowerShell에서 스크립트 실행이 차단되면 현재 터미널에서만 다음 명령을 실행한 뒤 가상환경을 활성화합니다.
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\\.venv\\Scripts\\Activate.ps1
+```
+
+### Windows (명령 프롬프트, CMD)
+
+```bat
+git clone https://github.com/keuil2526/sic-mosfet-temperature-model.git
+cd sic-mosfet-temperature-model
+py -m venv .venv
+.venv\\Scripts\\activate.bat
+py -m pip install -r requirements.txt
+py analyze_sic_mosfet.py
+```
+
+이미 저장소를 내려받은 경우에는 프로젝트 폴더에서 `git pull origin main`을 먼저 실행해 최신 코드를 받습니다.
 
 ## 입력 데이터
 
