@@ -6,6 +6,7 @@ The source workbook contains summary parameters, not raw transfer/output curves.
 from pathlib import Path
 import json
 import logging
+import csv
 
 import matplotlib
 matplotlib.use("Agg")
@@ -32,7 +33,32 @@ def load_data(path):
     """Read normalized measurements and validate IDs, temperatures, and units."""
     if not path.exists():
         raise FileNotFoundError(f"Input data not found: {path}")
-    df = pd.read_csv(path)
+    # Read rows with csv first: tolerate only surplus empty fields at row end.
+    # Non-empty extra fields are never silently discarded.
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            raise ValueError("CSV file is empty.")
+        header = [name.strip() for name in header]
+        expected_fields = len(header)
+        rows = []
+        for line_number, row in enumerate(reader, start=2):
+            if not row or all(not cell.strip() for cell in row):
+                continue
+            while len(row) > expected_fields and not row[-1].strip():
+                row.pop()
+            if len(row) != expected_fields:
+                raise ValueError(
+                    f"Malformed CSV at line {line_number}: expected "
+                    f"{expected_fields} columns but found {len(row)}. "
+                    "Check for an extra comma or a missing quote."
+                )
+            rows.append(row)
+    df = pd.DataFrame(rows, columns=header)
+    if df.empty:
+        raise ValueError("CSV has a header but no measurement rows.")
     required = {"device_id", "temperature_C", "vbr_dss_V", *METRICS.keys()}
     missing = required - set(df.columns)
     if missing:
