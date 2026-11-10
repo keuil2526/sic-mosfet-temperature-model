@@ -70,6 +70,33 @@ py analyze_sic_mosfet.py
 - `*_mean_sd.png`: 온도별 평균 ± 표준편차 그래프
 - `*_paired_change.csv`: 동일 소자 쌍을 기준으로 한 온도 구간별 변화량 및 변화율
 
+
+## 겉보기 이동도 감쇄 지수 모델
+
+기존 분석과 별도로 `model_apparent_mobility.py`를 실행하면 온저항의 온도 의존성으로부터 정규화된 겉보기 이동도 지수를 추정합니다.
+
+```bash
+python model_apparent_mobility.py
+```
+
+사용하는 경험식은 다음과 같습니다.
+
+```text
+RDS(on,T) / RDS(on,T0) = (T/T0)^alpha
+mu_app(T) / mu_app(T0) = (T/T0)^(-alpha)
+```
+
+여기서 온도 T는 절대온도(K)이며, T0는 기준 온도입니다. `alpha`는 측정된 온도별 평균 RDS(on)에 로그-선형 회귀를 적용하여 구합니다. 스크립트는 전체 평균 기반 모델뿐 아니라 소자별 지수도 계산하고, gfs는 이동도로 간주하지 않고 별도의 교차 확인 자료로 저장합니다.
+
+추가 출력:
+- `outputs/apparent_mobility_model.json`: 모델 계수, 데이터 요약 및 가정·한계
+- `outputs/apparent_mobility_model.csv`: 온도별 측정값, 모델값 및 정규화 지수
+- `outputs/apparent_mobility_model.png`: 겉보기 이동도 지수 모델 그래프
+- `outputs/apparent_mobility_device_exponents.csv`: 소자별 온도 지수
+- `outputs/gfs_crosscheck_summary.csv`: gfs 별도 요약
+
+**중요한 해석 한계:** 이 데이터는 전체 RDS(on) 요약값이며 채널 저항만 분리한 값이 아닙니다. 따라서 `mu_app`은 RDS(on)이 이동도에 반비례한다고 가정한 정규화 지수일 뿐, 실제 채널 전하 이동도의 직접 측정값이나 절대 이동도(cm²/V·s)가 아닙니다. 전체 온저항에는 드리프트 영역, JFET 영역, 기판 및 접촉 저항 등이 포함됩니다. 실제 이동도 추출에는 원시 Transfer Curve, 소자 기하 구조, 산화막 정전용량 및 채널 저항 분해가 추가로 필요합니다. 모델은 측정 범위인 25–150°C에서만 해석하며 범위 밖으로 외삽하지 않습니다.
+
 ## 해석상 주의사항
 
 1. 이 파일에는 요약 측정값만 있으므로 Transfer Curve와 Output Curve를 재구성하거나 원시 곡선에서 Vth/gm을 다시 추출하지 않습니다.
