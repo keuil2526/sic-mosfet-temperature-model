@@ -60,8 +60,11 @@ def fit_power_law(temperature_K, resistance):
     r0 = resistance[0]
     x = np.log(temperature_K / t0)
     y = np.log(resistance / r0)
-    alpha, intercept = np.polyfit(x, y, 1)
-    predicted_log = alpha * x + intercept
+    # The normalization requires the fitted curve to pass through (x, y) = (0, 0).
+    # Fit one exponent with a zero intercept so the reference index is exactly 1.
+    alpha = float(np.dot(x, y) / np.dot(x, x))
+    intercept = 0.0
+    predicted_log = alpha * x
     ss_res = float(np.sum((y - predicted_log) ** 2))
     ss_tot = float(np.sum((y - np.mean(y)) ** 2))
     r_squared = float(1 - ss_res / ss_tot) if ss_tot > 0 else None
